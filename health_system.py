@@ -130,3 +130,8 @@ def get_client_profile(client_id):
         ],
         'created_at': client.created_at.isoformat()
     })
+    
+
+# Entry point for the Flask application
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5001, debug=True)
