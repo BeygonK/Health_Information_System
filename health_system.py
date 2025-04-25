@@ -1,13 +1,24 @@
 from flask import Flask, jsonify, request
+from flask_sqlalchemy import SQLAlchemy
 from flasgger import Swagger, swag_from
+from flask_caching import Cache
 import uuid
 from datetime import datetime
 from jsonschema import validate, ValidationError
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///health_system.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['CACHE_TYPE'] = 'SimpleCache'
+db = SQLAlchemy(app)
+cache = Cache(app)
 Swagger(app)
 
-# JSON Schemas for validation
+executor = ThreadPoolExecutor()
+
+# JSON Schemas
 PROGRAM_SCHEMA = {
     "type": "object",
     "properties": {
@@ -35,46 +46,31 @@ ENROLL_SCHEMA = {
     "required": ["program_id"]
 }
 
-# In-memory storage for clients and programs
-clients = {}
-programs = {}
+# Database Models
+class Program(db.Model):
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-class Client:
-    def __init__(self, name, date_of_birth, gender):
-        """
-        Initialize a new client with a unique ID, name, date of birth,gender, and an empty list of enrolled programs.
-        The ID is generated using UUID to ensure uniqueness.
+class Client(db.Model):
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = db.Column(db.String(100), nullable=False)
+    date_of_birth = db.Column(db.String(10), nullable=False)
+    gender = db.Column(db.String(10), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    enrolled_programs = db.relationship('Program', secondary='enrollment')
 
-        Args:
-            name (string): Holds the name of the client
-            date_of_birth (string): Holds the date of birth of the client
-            gender (string): Holds the gender of the client
-        """
-        self.id = str(uuid.uuid4())
-        self.name = name
-        self.date_of_birth = date_of_birth
-        self.gender = gender
-        self.enrolled_programs = []
-        self.created_at = datetime.now()
-        
+enrollment = db.Table('enrollment',
+    db.Column('client_id', db.String(36), db.ForeignKey('client.id')),
+    db.Column('program_id', db.String(36), db.ForeignKey('program.id'))
+)
 
-class Program:
-    def __init__(self, name, description):
-        """
-        Initialize a new program with a unique ID, name, description, and the date it was created.
+# Create database
+with app.app_context():
+    db.create_all()
 
-        Args:
-            name (string): Holds the name of the program
-            description (string): Describes the program
-        """
-        self.id = str(uuid.uuid4())
-        self.name = name
-        self.description = description
-        self.created_at = datetime.now()
-
-
-
-# 1. Route to get programs
+# 1. Create a health program
 @app.route('/programs', methods=['POST'])
 @swag_from({
     'tags': ['Programs'],
@@ -102,8 +98,9 @@ def create_program():
     try:
         data = request.get_json()
         validate(instance=data, schema=PROGRAM_SCHEMA)
-        program = Program(data['name'], data['description'])
-        programs[program.id] = program
+        program = Program(name=data['name'], description=data['description'])
+        db.session.add(program)
+        db.session.commit()
         return jsonify({
             'id': program.id,
             'name': program.name,
@@ -112,7 +109,6 @@ def create_program():
         }), 201
     except ValidationError as e:
         return jsonify({'error': str(e)}), 400
-    
 
 # 2. Register a new client
 @app.route('/clients', methods=['POST'])
@@ -143,8 +139,13 @@ def register_client():
     try:
         data = request.get_json()
         validate(instance=data, schema=CLIENT_SCHEMA)
-        client = Client(data['name'], data['date_of_birth'], data['gender'])
-        clients[client.id] = client
+        client = Client(
+            name=data['name'],
+            date_of_birth=data['date_of_birth'],
+            gender=data['gender']
+        )
+        db.session.add(client)
+        db.session.commit()
         return jsonify({
             'id': client.id,
             'name': client.name,
@@ -154,7 +155,6 @@ def register_client():
         }), 201
     except ValidationError as e:
         return jsonify({'error': str(e)}), 400
-    
 
 # 3. Enroll client in a program
 @app.route('/clients/<client_id>/enroll', methods=['POST'])
@@ -190,23 +190,24 @@ def enroll_client(client_id):
     try:
         data = request.get_json()
         validate(instance=data, schema=ENROLL_SCHEMA)
-        program_id = data['program_id']
+        client = Client.query.get(client_id)
+        program = Program.query.get(data['program_id'])
         
-        if client_id not in clients or program_id not in programs:
+        if not client or not program:
             return jsonify({'error': 'Client or Program not found'}), 404
         
-        client = clients[client_id]
-        if program_id not in client.enrolled_programs:
-            client.enrolled_programs.append(program_id)
+        if program not in client.enrolled_programs:
+            client.enrolled_programs.append(program)
+            db.session.commit()
         
         return jsonify({
-            'message': f'Client enrolled in {programs[program_id].name}',
-            'enrolled_programs': [programs[pid].name for pid in client.enrolled_programs]
+            'message': f'Client enrolled in {program.name}',
+            'enrolled_programs': [p.name for p in client.enrolled_programs]
         })
     except ValidationError as e:
         return jsonify({'error': str(e)}), 400
 
-# 4. Search for a client
+# 4. Search for a client (async)
 @app.route('/clients/search', methods=['GET'])
 @swag_from({
     'tags': ['Clients'],
@@ -222,23 +223,29 @@ def enroll_client(client_id):
         '200': {'description': 'List of matching clients'}
     }
 })
-def search_client():
+async def search_client():
     name = request.args.get('name', '').lower()
-    results = [
-        {
-            'id': client.id,
-            'name': client.name,
-            'date_of_birth': client.date_of_birth,
-            'gender': client.gender
-        }
-        for client in clients.values()
-        if name in client.name.lower()
-    ]
+    
+    async def search():
+        with app.app_context():
+            clients = Client.query.filter(Client.name.ilike(f'%{name}%')).all()
+            return [
+                {
+                    'id': client.id,
+                    'name': client.name,
+                    'date_of_birth': client.date_of_birth,
+                    'gender': client.gender
+                }
+                for client in clients
+            ]
+    
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(executor, search)
     return jsonify(results)
 
-
-# 5. View client profile
+# 5 & 6. View client profile (cached)
 @app.route('/clients/<client_id>', methods=['GET'])
+@cache.cached(timeout=60)
 @swag_from({
     'tags': ['Clients'],
     'parameters': [
@@ -255,10 +262,10 @@ def search_client():
     }
 })
 def get_client_profile(client_id):
-    if client_id not in clients:
+    client = Client.query.get(client_id)
+    if not client:
         return jsonify({'error': 'Client not found'}), 404
     
-    client = clients[client_id]
     return jsonify({
         'id': client.id,
         'name': client.name,
@@ -266,16 +273,14 @@ def get_client_profile(client_id):
         'gender': client.gender,
         'enrolled_programs': [
             {
-                'id': pid,
-                'name': programs[pid].name,
-                'description': programs[pid].description
+                'id': p.id,
+                'name': p.name,
+                'description': p.description
             }
-            for pid in client.enrolled_programs
+            for p in client.enrolled_programs
         ],
         'created_at': client.created_at.isoformat()
     })
-    
 
-# Entry point for the Flask application
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=True)
