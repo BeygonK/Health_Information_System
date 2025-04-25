@@ -76,53 +76,152 @@ class Program:
 
 # 1. Route to get programs
 @app.route('/programs', methods=['POST'])
+@swag_from({
+    'tags': ['Programs'],
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'name': {'type': 'string', 'example': 'TB'},
+                    'description': {'type': 'string', 'example': 'Tuberculosis Treatment'}
+                },
+                'required': ['name', 'description']
+            }
+        }
+    ],
+    'responses': {
+        '201': {'description': 'Program created'},
+        '400': {'description': 'Invalid input'}
+    }
+})
 def create_program():
-    data = request.get_json()
-    program = Program(data['name'], data['description'])
-    programs[program.id] = program
-    return jsonify({
-        'id': program.id,
-        'name': program.name,
-        'description': program.description,
-        'created_at': program.created_at.isoformat()
-    }), 201
+    try:
+        data = request.get_json()
+        validate(instance=data, schema=PROGRAM_SCHEMA)
+        program = Program(data['name'], data['description'])
+        programs[program.id] = program
+        return jsonify({
+            'id': program.id,
+            'name': program.name,
+            'description': program.description,
+            'created_at': program.created_at.isoformat()
+        }), 201
+    except ValidationError as e:
+        return jsonify({'error': str(e)}), 400
     
 
 # 2. Register a new client
 @app.route('/clients', methods=['POST'])
+@swag_from({
+    'tags': ['Clients'],
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'name': {'type': 'string', 'example': 'John Doe'},
+                    'date_of_birth': {'type': 'string', 'example': '1990-01-01'},
+                    'gender': {'type': 'string', 'example': 'Male'}
+                },
+                'required': ['name', 'date_of_birth', 'gender']
+            }
+        }
+    ],
+    'responses': {
+        '201': {'description': 'Client registered'},
+        '400': {'description': 'Invalid input'}
+    }
+})
 def register_client():
-    data = request.get_json()
-    client = Client(data['name'], data['date_of_birth'], data['gender'])
-    clients[client.id] = client
-    return jsonify({
-        'id': client.id,
-        'name': client.name,
-        'date_of_birth': client.date_of_birth,
-        'gender': client.gender,
-        'created_at': client.created_at.isoformat()
-    }), 201
+    try:
+        data = request.get_json()
+        validate(instance=data, schema=CLIENT_SCHEMA)
+        client = Client(data['name'], data['date_of_birth'], data['gender'])
+        clients[client.id] = client
+        return jsonify({
+            'id': client.id,
+            'name': client.name,
+            'date_of_birth': client.date_of_birth,
+            'gender': client.gender,
+            'created_at': client.created_at.isoformat()
+        }), 201
+    except ValidationError as e:
+        return jsonify({'error': str(e)}), 400
     
 
 # 3. Enroll client in a program
 @app.route('/clients/<client_id>/enroll', methods=['POST'])
+@swag_from({
+    'tags': ['Clients'],
+    'parameters': [
+        {
+            'name': 'client_id',
+            'in': 'path',
+            'type': 'string',
+            'required': True
+        },
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'program_id': {'type': 'string'}
+                },
+                'required': ['program_id']
+            }
+        }
+    ],
+    'responses': {
+        '200': {'description': 'Client enrolled'},
+        '400': {'description': 'Invalid input'},
+        '404': {'description': 'Client or Program not found'}
+    }
+})
 def enroll_client(client_id):
-    data = request.get_json()
-    program_id = data['program_id']
-    
-    if client_id not in clients or program_id not in programs:
-        return jsonify({'error': 'Client or Program not found'}), 404
-    
-    client = clients[client_id]
-    if program_id not in client.enrolled_programs:
-        client.enrolled_programs.append(program_id)
-    
-    return jsonify({
-        'message': f'Client enrolled in {programs[program_id].name}',
-        'enrolled_programs': [programs[pid].name for pid in client.enrolled_programs]
-    })
+    try:
+        data = request.get_json()
+        validate(instance=data, schema=ENROLL_SCHEMA)
+        program_id = data['program_id']
+        
+        if client_id not in clients or program_id not in programs:
+            return jsonify({'error': 'Client or Program not found'}), 404
+        
+        client = clients[client_id]
+        if program_id not in client.enrolled_programs:
+            client.enrolled_programs.append(program_id)
+        
+        return jsonify({
+            'message': f'Client enrolled in {programs[program_id].name}',
+            'enrolled_programs': [programs[pid].name for pid in client.enrolled_programs]
+        })
+    except ValidationError as e:
+        return jsonify({'error': str(e)}), 400
 
 # 4. Search for a client
 @app.route('/clients/search', methods=['GET'])
+@swag_from({
+    'tags': ['Clients'],
+    'parameters': [
+        {
+            'name': 'name',
+            'in': 'query',
+            'type': 'string',
+            'required': False
+        }
+    ],
+    'responses': {
+        '200': {'description': 'List of matching clients'}
+    }
+})
 def search_client():
     name = request.args.get('name', '').lower()
     results = [
@@ -138,9 +237,23 @@ def search_client():
     return jsonify(results)
 
 
-
 # 5. View client profile
 @app.route('/clients/<client_id>', methods=['GET'])
+@swag_from({
+    'tags': ['Clients'],
+    'parameters': [
+        {
+            'name': 'client_id',
+            'in': 'path',
+            'type': 'string',
+            'required': True
+        }
+    ],
+    'responses': {
+        '200': {'description': 'Client profile'},
+        '404': {'description': 'Client not found'}
+    }
+})
 def get_client_profile(client_id):
     if client_id not in clients:
         return jsonify({'error': 'Client not found'}), 404
