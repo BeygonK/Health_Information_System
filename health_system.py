@@ -70,3 +70,38 @@ def register_client():
         'gender': client.gender,
         'created_at': client.created_at.isoformat()
     }), 201
+    
+
+# 3. Enroll client in a program
+@app.route('/clients/<client_id>/enroll', methods=['POST'])
+def enroll_client(client_id):
+    data = request.get_json()
+    program_id = data['program_id']
+    
+    if client_id not in clients or program_id not in programs:
+        return jsonify({'error': 'Client or Program not found'}), 404
+    
+    client = clients[client_id]
+    if program_id not in client.enrolled_programs:
+        client.enrolled_programs.append(program_id)
+    
+    return jsonify({
+        'message': f'Client enrolled in {programs[program_id].name}',
+        'enrolled_programs': [programs[pid].name for pid in client.enrolled_programs]
+    })
+
+# 4. Search for a client
+@app.route('/clients/search', methods=['GET'])
+def search_client():
+    name = request.args.get('name', '').lower()
+    results = [
+        {
+            'id': client.id,
+            'name': client.name,
+            'date_of_birth': client.date_of_birth,
+            'gender': client.gender
+        }
+        for client in clients.values()
+        if name in client.name.lower()
+    ]
+    return jsonify(results)
