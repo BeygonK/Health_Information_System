@@ -105,3 +105,28 @@ def search_client():
         if name in client.name.lower()
     ]
     return jsonify(results)
+
+
+
+# 5. View client profile
+@app.route('/clients/<client_id>', methods=['GET'])
+def get_client_profile(client_id):
+    if client_id not in clients:
+        return jsonify({'error': 'Client not found'}), 404
+    
+    client = clients[client_id]
+    return jsonify({
+        'id': client.id,
+        'name': client.name,
+        'date_of_birth': client.date_of_birth,
+        'gender': client.gender,
+        'enrolled_programs': [
+            {
+                'id': pid,
+                'name': programs[pid].name,
+                'description': programs[pid].description
+            }
+            for pid in client.enrolled_programs
+        ],
+        'created_at': client.created_at.isoformat()
+    })
