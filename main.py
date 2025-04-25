@@ -40,3 +40,18 @@ class Program:
         self.name = name
         self.description = description
         self.created_at = datetime.now()
+
+
+
+# 1. Route to get programs
+@app.route('/programs', methods=['POST'])
+def create_program():
+    data = request.get_json()
+    program = Program(data['name'], data['description'])
+    programs[program.id] = program
+    return jsonify({
+        'id': program.id,
+        'name': program.name,
+        'description': program.description,
+        'created_at': program.created_at.isoformat()
+    }), 201
