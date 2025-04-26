@@ -1,6 +1,7 @@
 Health Information System API
 A RESTful API for managing health programs and client enrollments, built with Flask, SQLAlchemy, and SQLite. The API supports creating programs, registering clients, enrolling clients in programs, searching clients, and retrieving client profiles, with data encryption, authentication, and caching. Swagger UI is integrated for API documentation.
-Table of Contents
+
+<h1>Table of Contents</h1>
 
 Features
 Project Structure
